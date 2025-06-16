@@ -1,116 +1,176 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Remote Window Viewer</title>
-  <style>
-    body { margin:0; background:#000; color:#ddd; font-family:sans-serif;
-           display:flex; flex-direction:column; align-items:center; }
-    canvas { border:2px solid #333; margin-top:10px; }
-    #status { margin-top:6px; }
-    #connectSection { margin-top: 20px; }
-  </style>
+<meta charset="utf-8" />
+<title>Stream Setup & Viewer</title>
+<style>
+  body { background:#000; color:#eee; font-family:sans-serif; padding:1em; text-align:center; }
+  input, button { font-size:1em; padding:0.5em; margin:0.5em; }
+  canvas { border:2px solid #444; margin-top:10px; }
+  #streamSection, #viewerSection { margin-top: 20px; }
+</style>
 </head>
 <body>
-  <h2>Remote Window Viewer</h2>
-  <div id="connectSection">
-    <label for="codeInput">Enter access code:</label>
-    <input id="codeInput" type="text" maxlength="6" />
-    <button id="connectBtn">Connect</button>
-  </div>
-  <div id="status">Waiting for code...</div>
-  <canvas id="c" style="display:none;"></canvas>
 
-  <script>
-    const canvas = document.getElementById('c');
-    const ctx = canvas.getContext('2d');
-    const status = msg => document.getElementById('status').textContent = msg;
+<h1>Stream Setup & Viewer</h1>
 
-    let ws = null;
-    let interactive = false;
+<div id="setupSection">
+  <h3>Start Streaming</h3>
+  <label>Enter Window Title to Share:</label><br/>
+  <input id="windowInput" placeholder="Exact window title" style="width:300px" />
+  <button id="startStreamBtn">Start Stream</button>
+</div>
 
-    document.getElementById('connectBtn').onclick = () => {
-      const code = document.getElementById('codeInput').value.trim().toLowerCase();
-      if(code.length !== 6){
-        status("❌ Code must be 6 characters");
-        return;
-      }
-      status("Looking up server...");
-      fetch(`/lookup/${code}`).then(res => {
-        if(!res.ok) throw new Error("Code not found");
-        return res.json();
-      }).then(({ip, port}) => {
-        status(`Connecting to ${ip}:${port} ...`);
-        connectWS(ip, port, code);
-      }).catch(e => {
-        status("❌ " + e.message);
-      });
+<div id="streamSection" style="display:none;">
+  <p>Streaming started. Access Code: <b id="accessCode"></b></p>
+  <button id="stopStreamBtn">Stop Stream</button>
+  <p id="streamStatus">Streaming...</p>
+</div>
+
+<div id="viewerSection" style="margin-top:40px;">
+  <h3>Join Stream</h3>
+  <label>Enter Access Code:</label><br/>
+  <input id="viewerCodeInput" maxlength="6" style="width:100px" />
+  <button id="joinStreamBtn">Join Stream</button>
+  <p id="viewerStatus">Not connected</p>
+  <canvas id="viewerCanvas" style="display:none;"></canvas>
+</div>
+
+<script>
+  let ws = null;
+  let isStreamer = false;
+  let interactive = false;
+
+  const startStreamBtn = document.getElementById('startStreamBtn');
+  const stopStreamBtn = document.getElementById('stopStreamBtn');
+  const windowInput = document.getElementById('windowInput');
+  const accessCodeSpan = document.getElementById('accessCode');
+  const streamSection = document.getElementById('streamSection');
+  const setupSection = document.getElementById('setupSection');
+  const streamStatus = document.getElementById('streamStatus');
+
+  const viewerCodeInput = document.getElementById('viewerCodeInput');
+  const joinStreamBtn = document.getElementById('joinStreamBtn');
+  const viewerStatus = document.getElementById('viewerStatus');
+  const viewerCanvas = document.getElementById('viewerCanvas');
+  const ctx = viewerCanvas.getContext('2d');
+
+  startStreamBtn.onclick = () => {
+    const windowTitle = windowInput.value.trim();
+    if (!windowTitle) {
+      alert("Please enter the exact window title");
+      return;
+    }
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    isStreamer = true;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({tag:"start", window: windowTitle}));
+      streamStatus.textContent = "Starting stream...";
     };
 
-    function connectWS(ip, port, code) {
-      ws = new WebSocket(`ws://${ip}:${port}/ws`);
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({tag:'hello', code}));
-      };
-
-      ws.onmessage = ev => {
-        const msg = JSON.parse(ev.data);
-        if(msg.tag === 'error'){
-          status("❌ "+msg.msg);
-          ws.close();
-          return;
-        }
-        if(msg.tag === 'role'){
-          interactive = msg.interactive;
-          status(interactive ? '🕹 Control granted' : '👁 View-only');
-          canvas.style.display = 'block';
-        }
-        if(msg.tag === 'frame'){
-          const img = new Image();
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.drawImage(img,0,0);
-          };
-          img.src = 'data:image/jpeg;base64,' + msg.data;
-        }
-      };
-
-      ws.onclose = () => {
-        status("Disconnected");
-        canvas.style.display = 'none';
-      };
-
-      function send(tag, data){
-        if(ws && ws.readyState === 1){
-          ws.send(JSON.stringify({tag, data}));
-        }
+    ws.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      if (msg.tag === "code") {
+        accessCodeSpan.textContent = msg.code;
+        streamStatus.textContent = "Streaming...";
+        setupSection.style.display = "none";
+        streamSection.style.display = "block";
       }
+      if (msg.tag === "error") {
+        alert("Error: " + msg.msg);
+        streamStatus.textContent = "Error";
+      }
+    };
 
-      canvas.onmousedown = e => {
-        if(!interactive) return;
-        const r = canvas.getBoundingClientRect();
-        send('mouse', {x: e.clientX - r.left, y: e.clientY - r.top, button: e.button, event: 'down'});
-      };
-      canvas.onmouseup = e => {
-        if(!interactive) return;
-        const r = canvas.getBoundingClientRect();
-        send('mouse', {x: e.clientX - r.left, y: e.clientY - r.top, button: e.button, event: 'up'});
-      };
-      canvas.onmousemove = e => {
-        if(!interactive) return;
-        const r = canvas.getBoundingClientRect();
-        send('mouse', {x: e.clientX - r.left, y: e.clientY - r.top, button: e.button, event: 'move'});
-      };
+    ws.onclose = () => {
+      streamStatus.textContent = "Stream stopped";
+      setupSection.style.display = "block";
+      streamSection.style.display = "none";
+      accessCodeSpan.textContent = "";
+      ws = null;
+    };
+  };
 
-      window.onkeydown = e => {
-        if(interactive) send('key', {key: e.key, event: 'down'});
-      };
-      window.onkeyup = e => {
-        if(interactive) send('key', {key: e.key, event: 'up'});
-      };
+  stopStreamBtn.onclick = () => {
+    if(ws && ws.readyState === WebSocket.OPEN){
+      ws.send(JSON.stringify({tag:"stop"}));
+      ws.close();
     }
-  </script>
+  };
+
+  window.onbeforeunload = () => {
+    if(isStreamer && ws && ws.readyState === WebSocket.OPEN){
+      ws.send(JSON.stringify({tag:"stop"}));
+      ws.close();
+    }
+  };
+
+  joinStreamBtn.onclick = () => {
+    const code = viewerCodeInput.value.trim().toLowerCase();
+    if(code.length !== 6){
+      viewerStatus.textContent = "Code must be 6 characters";
+      return;
+    }
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    isStreamer = false;
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({tag:"hello", code}));
+      viewerStatus.textContent = "Connecting...";
+    };
+
+    ws.onmessage = e => {
+      const msg = JSON.parse(e.data);
+      if(msg.tag === "error"){
+        viewerStatus.textContent = "Error: " + msg.msg;
+        ws.close();
+        return;
+      }
+      if(msg.tag === "role"){
+        interactive = msg.interactive;
+        viewerStatus.textContent = interactive ? "Control granted" : "View-only";
+        viewerCanvas.style.display = "block";
+      }
+      if(msg.tag === "frame"){
+        const img = new Image();
+        img.onload = () => {
+          viewerCanvas.width = img.width;
+          viewerCanvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+        };
+        img.src = 'data:image/jpeg;base64,' + msg.data;
+      }
+    };
+
+    ws.onclose = () => {
+      viewerStatus.textContent = "Disconnected";
+      viewerCanvas.style.display = "none";
+    };
+
+    // Send control input if allowed
+    viewerCanvas.onmousedown = e => {
+      if(!interactive) return;
+      const r = viewerCanvas.getBoundingClientRect();
+      ws.send(JSON.stringify({tag:'mouse', data:{x:e.clientX - r.left, y:e.clientY - r.top, button:e.button, event:'down'}}));
+    };
+    viewerCanvas.onmouseup = e => {
+      if(!interactive) return;
+      const r = viewerCanvas.getBoundingClientRect();
+      ws.send(JSON.stringify({tag:'mouse', data:{x:e.clientX - r.left, y:e.clientY - r.top, button:e.button, event:'up'}}));
+    };
+    viewerCanvas.onmousemove = e => {
+      if(!interactive) return;
+      const r = viewerCanvas.getBoundingClientRect();
+      ws.send(JSON.stringify({tag:'mouse', data:{x:e.clientX - r.left, y:e.clientY - r.top, button:e.button, event:'move'}}));
+    };
+    window.onkeydown = e => {
+      if(interactive) ws.send(JSON.stringify({tag:'key', data:{key:e.key, event:'down'}}));
+    };
+    window.onkeyup = e => {
+      if(interactive) ws.send(JSON.stringify({tag:'key', data:{key:e.key, event:'up'}}));
+    };
+  };
+</script>
 </body>
 </html>
