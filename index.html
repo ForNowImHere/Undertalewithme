@@ -1,101 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Remote Window Viewer</title>
-  <style>
-    body {
-      margin: 0;
-      background: #000;
-      color: #ddd;
-      font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-    canvas {
-      border: 2px solid #333;
-      margin-top: 10px;
-    }
-    #status {
-      margin-top: 6px;
-    }
-  </style>
+<meta charset="utf-8" />
+<title>Remote Window Viewer</title>
+<style>
+  body {margin:0;background:#000;color:#ddd;font-family:sans-serif;
+        display:flex;flex-direction:column;align-items:center}
+  canvas {border:2px solid #333;margin-top:10px}
+  #status {margin-top:6px}
+</style>
 </head>
 <body>
   <h2>Remote Window</h2>
-  <div id="status">Connecting...</div>
+  <div id="status">Connecting…</div>
   <canvas id="c"></canvas>
 
-  <script>
-    let ws, sid, interactive = false;
-    const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+<script>
+const canvas = document.getElementById('c'), ctx = canvas.getContext('2d');
+const url  = 'ws://192.168.0.1:8765';         // ← put your server IP:PORT here
+const code = new URLSearchParams(location.search).get('code')
+          || prompt('Access code?');
 
-    // 🔧 Change this to your server IP or hostname if needed
-    const url = 'ws://192.168.0.1'; // Example: 'ws://192.168.1.10:8765'
-    const code = 'alpha';              // Must match one of the codes in the Python server
+let ws, sid, interactive=false;
 
-    function log(txt) {
-      document.getElementById('status').textContent = txt;
+function log(txt){ document.getElementById('status').textContent = txt; }
+
+function connect(){
+  ws = new WebSocket(url);
+  ws.onopen = () => ws.send(JSON.stringify({tag:'hello', code}));
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if(m.tag==='error'){ log('❌ '+m.msg); ws.close(); return; }
+    if(m.tag==='role'){ interactive=m.interactive; sid=m.sid;
+        log(interactive?'🕹 Control':'👁 View'); }
+    if(m.tag==='frame'){
+      const img=new Image();
+      img.onload=()=>{canvas.width=img.width;canvas.height=img.height;ctx.drawImage(img,0,0);};
+      img.src='data:image/jpeg;base64,'+m.data;
     }
+  };
+}
+connect();
 
-    function connect() {
-      ws = new WebSocket(url);
-
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ tag: 'hello', code }));
-      };
-
-      ws.onmessage = evt => {
-        const msg = JSON.parse(evt.data);
-        if (msg.tag === 'error') {
-          log('❌ ' + msg.msg);
-          ws.close();
-          return;
-        }
-        if (msg.tag === 'role') {
-          interactive = msg.interactive;
-          sid = msg.sid;
-          log(interactive ? '🕹 Control granted' : '👁 View-only');
-        }
-        if (msg.tag === 'frame') {
-          const img = new Image();
-          img.onload = () => {
-            canvas.width = img.width;
-            canvas.height = img.height;
-            ctx.drawImage(img, 0, 0);
-          };
-          img.src = 'data:image/jpeg;base64,' + msg.data;
-        }
-      };
-    }
-
-    function send(tag, data) {
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ tag, data }));
-      }
-    }
-
-    function handleMouse(ev, type) {
-      if (!interactive) return;
-      const r = canvas.getBoundingClientRect();
-      send('mouse', {
-        x: ev.clientX - r.left,
-        y: ev.clientY - r.top,
-        button: ev.button,
-        event: type
-      });
-    }
-
-    canvas.onmousedown = e => handleMouse(e, 'down');
-    canvas.onmouseup = e => handleMouse(e, 'up');
-    canvas.onmousemove = e => handleMouse(e, 'move');
-
-    window.onkeydown = e => interactive && send('key', { key: e.key, event: 'down' });
-    window.onkeyup = e => interactive && send('key', { key: e.key, event: 'up' });
-
-    // 🔁 Auto-connect on load
-    connect();
-  </script>
+function send(tag,data){ if(ws.readyState===1) ws.send(JSON.stringify({tag,data})); }
+function mouse(e,type){
+  if(!interactive) return;
+  const r=canvas.getBoundingClientRect();
+  send('mouse',{x:e.clientX-r.left,y:e.clientY-r.top,button:e.button,event:type});
+}
+canvas.onmousedown=e=>mouse(e,'down');
+canvas.onmouseup  =e=>mouse(e,'up');
+canvas.onmousemove=e=>mouse(e,'move');
+window.onkeydown=e=>interactive&&send('key',{key:e.key,event:'down'});
+window.onkeyup  =e=>interactive&&send('key',{key:e.key,event:'up'});
+</script>
 </body>
 </html>
